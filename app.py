@@ -1,7 +1,15 @@
 import streamlit as st
-import pytesseract
-from pdf2image import convert_from_bytes
+import pypdfium2 as pdfium
+import easyocr
+import numpy as np
 import re
+
+# Initialize EasyOCR reader with quantized weights for faster CPU inference
+@st.cache_resource
+def load_ocr():
+    return easyocr.Reader(['en'], gpu=False, quantize=True)
+
+reader = load_ocr()
 
 # 1. Offline Session Login Wall
 def check_password():
@@ -42,13 +50,32 @@ if check_password():
     uploaded_file = st.file_uploader("Upload PDF", type="pdf")
 
     if uploaded_file is not None:
-        with st.spinner("Processing document via Air-Gapped OCR..."):
-            images = convert_from_bytes(uploaded_file.read())
+        with st.spinner("Processing document via Optimized Pure-Python OCR..."):
+            # 1. Load PDF and render at scale=1.5 (Fast & clear balance)
+            pdf = pdfium.PdfDocument(uploaded_file.read())
             
             full_text = ""
-            for image in images:
-                full_text += pytesseract.image_to_string(image) + "\n"
-            
+            progress_bar = st.progress(0)
+            total_pages = len(pdf)
+
+            for i, page in enumerate(pdf):
+                # Render page image
+                image = page.render(scale=1.5).to_pil()
+                img_array = np.array(image)
+                
+                # 2. Optimized EasyOCR text extraction
+                results = reader.readtext(
+                    img_array, 
+                    detail=0, 
+                    paragraph=True,       # Group lines to speed up processing
+                    canvas_size=1200       # Prevent massive image upscaling
+                )
+                full_text += " ".join(results) + "\n"
+                
+                # Update progress bar
+                progress_bar.progress((i + 1) / total_pages)
+
+            # 3. Regex Extraction
             metrics_schema = {
                 "Generator Capacity": r"(?i)(?:generator\s+capacity|generator\s+units?|generator\s+rating|generator\s+output)\s*[:\-]?\s*([\d\.,]+\s*k?W)",
                 "Fuel Reserves": r"(?i)(?:fuel\s+reserves|diesel\s+storage|fuel\s+capacity)\s*[:\-]?\s*([\d\.,]+\s*(?:gallons|days|gal))",
