@@ -6,6 +6,7 @@ Additional pdf's are documented here for reference and as control tests for the 
 
 ### Software
 **Python 3.10.X**
+
 **Ollama**
 
 ---
