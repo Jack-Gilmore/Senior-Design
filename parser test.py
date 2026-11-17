@@ -1,5 +1,6 @@
 import pymupdf
-from ollama import chat
+from ollama import chat, embed
+import chromadb 
 
 def split_into_chunks(text, page_number, chunk_size=3000, overlap=300):
     chunks = []
@@ -25,28 +26,32 @@ def split_into_chunks(text, page_number, chunk_size=3000, overlap=300):
 
 
 chunks = []
-with pymupdf.open("FY23-AEPRR-Report.pdf") as doc:
+with pymupdf.open("Tyndall NRL Doc.pdf") as doc:
     for page_index in range(len(doc)):
         page_text = doc.load_page(page_index).get_text()
         chunks.extend(split_into_chunks(page_text, page_index + 1))
 
-question = "What is the largest number in this PDF?"
+question = "what is the percent of outages on privatized systems for FY 2019? "
 selected_chunks = chunks  # Test only; this may be too much text for a large PDF.
 
-context = "\n\n".join(
-    f"[{chunk['id']}]\n{chunk['text']}"
-    for chunk in selected_chunks
-)
 
+
+
+
+embedding_response = embed(model = "embeddinggemma", input=[chunk["text"] for chunk in chunks])
+client = chromadb.PersistentClient(path="./chroma_db")
+collection = client.get_or_create_collection("pdf_chunks")
+collection.add(ids=[chunk["id"] for chunk in chunks], documents=[chunk["text"] for chunk in chunks], embeddings=embedding_response.embeddings, metadatas =[{"page": chunk["page"]} for chunk in chunks], )
+question_embedding = embed(model = "embeddinggemma", input=[question]).embeddings[0]
+# allows for 5 closest matches, needs to be tested for potential adjustment 
+matches = collection.query(query_embeddings=[question_embedding], n_results=5) 
+context = "\n\n".join(f"[{chunk_id}]\n{text}" for chunk_id, text in zip(matches["ids"][0], matches["documents"][0]))
 response = chat(
-    model="qwen3:4b",
+    model="qwen3:8b",
     messages=[{
         "role": "user",
-        "content": (
-            "Answer using the supplied text. Cite supporting chunk IDs exactly. "
-            "If the text doesn't answer the question, say so.\n\n"
-            f"Question: {question}\n\nText:\n{context}"
-        ),
+        "content": f"Answer the question using only the provided text and cite your answer with the chunk IDs. \n\nQuestion: {question}\n\n{context}", 
+        
     }],
 )
 
